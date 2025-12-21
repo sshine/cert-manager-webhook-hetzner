@@ -27,7 +27,7 @@ jobs:
         with:
           go-version: stable
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@2e4d6b7c8e5f1a3b9c8d6b4a7c5e8f9a1b2c3d4e5f
+        uses: golangci/golangci-lint-action@8e8c483db84b4bee98b60c0593521ed34d9990e8
         with:
           # Require: The version of golangci-lint to use.
           # When `install-mode` is `binary` (default) the value can be v1.2 or v1.2.3 or `latest` to use the latest version.
