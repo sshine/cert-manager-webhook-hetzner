@@ -55,3 +55,5 @@ podSecurityContext:
   runAsGroup: 1000
   runAsUser: 1000
   runAsNonRoot: true
+
+priorityClassName: "something"
