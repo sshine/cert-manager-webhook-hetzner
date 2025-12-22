@@ -45,4 +45,6 @@ jobs:
           VALIDATE_PYTHON: false
           VALIDATE_PYTHON_FLAKE8: false
           VALIDATE_PYTHON_BLACK: false
-          VALIDATE_YAML: false
+          VALIDATE_YAML: true
+          VALIDATE_YAML_PRETTIER: true
+          YAML_PRETTIER_EXCLUDE_REGEX: 'deploy/.*/templates/.*\.ya?ml'
