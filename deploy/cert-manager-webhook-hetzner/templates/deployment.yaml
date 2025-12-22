@@ -21,9 +21,9 @@ spec:
         release: {{ .Release.Name }}
     spec:
       serviceAccountName: {{ include "cert-manager-webhook-hetzner.fullname" . }}
-{{- if .Values.priorityClassName }}
+      {{- if .Values.priorityClassName }}
       priorityClassName: {{ .Values.priorityClassName }}
-{{- end }}
+      {{- end }}
       containers:
         - name: {{ .Chart.Name }}
           image: "{{ .Values.image.registry }}/{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
