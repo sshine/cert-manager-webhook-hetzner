@@ -6,11 +6,6 @@
     "lineWidth": 80,
     "lineEnding": "lf"
   },
-  "json": {
-    "formatter": {
-      "trailingCommas": "none"
-    }
-  },
   "vcs": {
     "enabled": true,
     "clientKind": "git",
