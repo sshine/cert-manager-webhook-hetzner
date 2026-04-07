@@ -1,28 +1,28 @@
-# ACME webhook for Hetzner DNS API
+# ACME webhook for Hetzner Cloud DNS API
 
-This solver can be used when you want to use cert-manager with Hetzner DNS API. API documentation
-is [Hetzner DNS API docs](https://dns.hetzner.com/api-docs)
+This solver can be used when you want to use cert-manager with the [Hetzner Cloud DNS API](https://docs.hetzner.cloud/reference/cloud#dns).
+
+Fork of [vadimkim/cert-manager-webhook-hetzner](https://github.com/vadimkim/cert-manager-webhook-hetzner), rewritten for the Hetzner Cloud API (`api.hetzner.cloud`). Hetzner migrated DNS management from `dns.hetzner.com` to `api.hetzner.cloud` in November 2025, and the upstream webhook does not support the new API.
 
 ## Requirements
 
-- [go](https://golang.org/) >= 1.25.0
+- [go](https://golang.org/) >= 1.24.0
 - [helm](https://helm.sh/) >= v3.0.0
-- [kubernetes](https://kubernetes.io/) >= v1.14.0
+- [kubernetes](https://kubernetes.io/) >= v1.22.0
 - [cert-manager](https://cert-manager.io/) >= 0.12.0
 
 ## Installation
 
 ### cert-manager
 
-Follow the [instructions](https://cert-manager.io/docs/installation/) using the cert-manager documentation to install it
-within your cluster.
+Follow the [instructions](https://cert-manager.io/docs/installation/) using the cert-manager documentation to install it within your cluster.
 
 ### Webhook
 
 #### Using public helm chart
 
 ```bash
-helm repo add cert-manager-webhook-hetzner https://vadimkim.github.io/cert-manager-webhook-hetzner
+helm repo add cert-manager-webhook-hetzner https://sshine.github.io/cert-manager-webhook-hetzner
 helm install --namespace cert-manager cert-manager-webhook-hetzner cert-manager-webhook-hetzner/cert-manager-webhook-hetzner
 ```
 
@@ -32,8 +32,7 @@ helm install --namespace cert-manager cert-manager-webhook-hetzner cert-manager-
 helm install --namespace cert-manager cert-manager-webhook-hetzner deploy/cert-manager-webhook-hetzner
 ```
 
-**Note**: The kubernetes resources used to install the Webhook should be deployed within the same namespace as the
-cert-manager.
+**Note**: The kubernetes resources used to install the Webhook should be deployed within the same namespace as the cert-manager.
 
 To uninstall the webhook run
 
@@ -44,8 +43,7 @@ helm uninstall --namespace cert-manager cert-manager-webhook-hetzner
 ## Issuer
 
 Create a `ClusterIssuer` or `Issuer` resource as following:
-(Keep in Mind that the Example uses the Staging URL from Let's Encrypt. Look
-at [Getting Start](https://letsencrypt.org/getting-started/) for using the normal Let's Encrypt URL.)
+(Keep in mind that the example uses the Staging URL from Let's Encrypt. See [Getting Started](https://letsencrypt.org/getting-started/) for the production URL.)
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -54,36 +52,29 @@ metadata:
   name: letsencrypt-staging
 spec:
   acme:
-    # The ACME server URL
     server: https://acme-staging-v02.api.letsencrypt.org/directory
-
-    # Email address used for ACME registration
-    email: mail@example.com # REPLACE THIS WITH YOUR EMAIL!!!
-
-    # Name of a secret used to store the ACME account private key
+    email: mail@example.com
     privateKeySecretRef:
       name: letsencrypt-staging
-
     solvers:
       - dns01:
           webhook:
-            groupName: hetzner.cert-mananger-webhook.noshoes.xyz
+            groupName: acme.yourdomain.tld
             solverName: hetzner
             config:
               secretName: hetzner-secret
-              zoneName: example.com # (Optional): When not provided the Zone will searched in Hetzner API by recursion on full domain name
-              apiUrl: https://dns.hetzner.com/api/v1
+              # zoneName: example.com  # optional: auto-detected if omitted
+              # apiUrl: https://api.hetzner.cloud/v1  # optional: defaults to Hetzner Cloud API
+              # secretKey: api-token  # optional: defaults to "api-token"
 ```
 
 ### Credentials
 
-In order to access the Hetzner API, the webhook needs an API token.
+In order to access the Hetzner Cloud API, the webhook needs an API token. Create a token at [Hetzner Cloud Console](https://console.hetzner.cloud/) with DNS write permissions.
 
-If you choose another name for the secret than `hetzner-secret`, you must install the chart with a modified `secretName`
-value. Policies ensure that no other secrets can be read by the webhook. Also modify the value of `secretName` in the
-`[Cluster]Issuer`.
+If you choose another name for the secret than `hetzner-secret`, you must install the chart with a modified `secretName` value. RBAC policies ensure that no other secrets can be read by the webhook. Also modify the value of `secretName` in the `[Cluster]Issuer`.
 
-The secret for the example above will look like this:
+The secret key in the secret defaults to `api-token` and can be overridden with the `secretKey` config field.
 
 ```yaml
 apiVersion: v1
@@ -93,12 +84,10 @@ metadata:
   namespace: cert-manager
 type: Opaque
 data:
-  api-key: your-key-base64-encoded
+  api-token: <your-hetzner-cloud-api-token-base64-encoded>
 ```
 
 ### Create a certificate
-
-Finally you can create certificates, for example:
 
 ```yaml
 apiVersion: cert-manager.io/v1
@@ -120,38 +109,30 @@ spec:
 
 ### Running the test suite
 
-All DNS providers **must** run the DNS01 provider conformance testing suite,
-else they will have undetermined behaviour when used with cert-manager.
+All DNS providers **must** run the DNS01 provider conformance testing suite, else they will have undetermined behaviour when used with cert-manager.
 
-**It is essential that you configure and run the test suite when creating a
-DNS01 webhook.**
+**It is essential that you configure and run the test suite when creating a DNS01 webhook.**
 
-First, you need to have Hetzner account with access to DNS control panel. You need to create API token and have a
-registered and verified DNS zone there.
-Then you need to replace `zoneName` parameter at `testdata/hetzner/config.json` file with actual one.
-You also must encode your API token into base64 and put the hash into `testdata/hetzner/hetzner-secret.yml` file.
+First, you need to have a Hetzner Cloud account with access to DNS. You need to create an API token and have a registered and verified DNS zone.
+Then replace the `zoneName` parameter in `testdata/hetzner/config.json` with your actual zone. You also must encode your API token into base64 and put it in `testdata/hetzner/hetzner-secret.yml`.
 
 You can then run the test suite with:
 
 ```bash
-# first install necessary binaries (only required once)
 ./scripts/fetch-test-binaries.sh
-# then run the tests
-TEST_ZONE_NAME=example.com. make verify
+TEST_ZONE_NAME=example.com. make test
 ```
 
-## Creating new package
+## Building
 
-To build new Docker image for multiple architectures and push it to hub:
+The CI workflow (`.github/workflows/build.yml`) builds multi-arch Docker images for `linux/amd64`, `linux/arm64`, and `linux/arm/v7` and pushes them to GHCR:
 
-```shell
-docker buildx build --platform linux/amd64,linux/arm64,linux/arm/v7 -t zmejg/cert-manager-webhook-hetzner:1.2.0 . --push
+```
+ghcr.io/sshine/cert-manager-webhook-hetzner
 ```
 
-To compile and publish new Helm chart version:
+To build locally:
 
-```shell
-helm package deploy/cert-manager-webhook-hetzner
-git checkout gh-pages
-helm repo index . --url https://vadimkim.github.io/cert-manager-webhook-hetzner/
+```bash
+docker build -t cert-manager-webhook-hetzner .
 ```

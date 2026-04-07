@@ -1,63 +1,83 @@
 package internal
 
+import "strconv"
+
+const (
+	DefaultApiUrl    = "https://api.hetzner.cloud/v1"
+	DefaultSecretKey = "api-token"
+	DefaultTxtTTL    = 120
+)
+
 type Config struct {
-	ApiKey, ZoneName, ApiUrl string
+	ApiKey    string
+	ZoneName  string
+	ZoneId    int64
+	ApiUrl    string
+	SecretKey string
 }
 
-type RecordResponse struct {
-	Records []Record `json:"records"`
-	Meta    Meta     `json:"meta"`
+func (c *Config) ZoneIdStr() string {
+	return strconv.FormatInt(c.ZoneId, 10)
+}
+
+type ZoneListResponse struct {
+	Zones []Zone `json:"zones"`
 }
 
 type ZoneResponse struct {
-	Zones []Zone `json:"zones"`
-	Meta  Meta   `json:"meta"`
-}
-
-type Meta struct {
-	Pagination Pagination `json:"pagination"`
-}
-
-type Pagination struct {
-	Page         int `json:"page"`
-	PerPage      int `json:"per_page"`
-	LastPage     int `json:"last_page"`
-	TotalEntries int `json:"total_entries"`
-}
-
-type Record struct {
-	Type     string `json:"type"`
-	Id       string `json:"id"`
-	Created  string `json:"created"`
-	Modified string `json:"modified"`
-	ZoneId   string `json:"zone_id"`
-	Name     string `json:"name"`
-	Value    string `json:"value"`
-	Ttl      int    `json:"ttl"`
+	Zone Zone `json:"zone"`
 }
 
 type Zone struct {
-	Id              string       `json:"id"`
-	Created         string       `json:"created"`
-	Modified        string       `json:"modified"`
-	LegacyDnsHost   string       `json:"legacy_dns_host"`
-	LegacyNs        []string     `json:"legacy_ns"`
-	Name            string       `json:"name"`
-	Ns              []string     `json:"ns"`
-	Owner           string       `json:"owner"`
-	Paused          bool         `json:"paused"`
-	Permission      string       `json:"permission"`
-	Project         string       `json:"project"`
-	Registrar       string       `json:"registrar"`
-	Status          string       `json:"status"`
-	Ttl             int          `json:"ttl"`
-	Verified        string       `json:"verified"`
-	RecordsCount    int          `json:"records_count"`
-	IsSecondaryDns  bool         `json:"is_secondary_dns"`
-	TxtVerification Verification `json:"txt_verification"`
+	Id          int64  `json:"id"`
+	Name        string `json:"name"`
+	TTL         int    `json:"ttl"`
+	RecordCount int    `json:"record_count"`
 }
 
-type Verification struct {
-	Name  string `json:"name"`
-	Token string `json:"token"`
+type RRSetListResponse struct {
+	RRSets []RRSet `json:"rrsets"`
+}
+
+type RRSetResponse struct {
+	RRSet RRSet `json:"rrset"`
+}
+
+type RRSet struct {
+	Id      string        `json:"id"`
+	Name    string        `json:"name"`
+	Type    string        `json:"type"`
+	TTL     *int          `json:"ttl"`
+	Records []RRSetRecord `json:"records"`
+	Zone    int64         `json:"zone"`
+}
+
+type RRSetRecord struct {
+	Value   string `json:"value"`
+	Comment string `json:"comment,omitempty"`
+}
+
+type RRSetCreateRequest struct {
+	Name    string        `json:"name"`
+	Type    string        `json:"type"`
+	TTL     *int          `json:"ttl,omitempty"`
+	Records []RRSetRecord `json:"records"`
+}
+
+type RRSetAddRecordsRequest struct {
+	Records []RRSetRecord `json:"records"`
+	TTL     *int          `json:"ttl,omitempty"`
+}
+
+type RRSetRemoveRecordsRequest struct {
+	Records []RRSetRecord `json:"records"`
+}
+
+type ErrorResponse struct {
+	Error ErrorDetail `json:"error"`
+}
+
+type ErrorDetail struct {
+	Code    string `json:"code"`
+	Message string `json:"message"`
 }

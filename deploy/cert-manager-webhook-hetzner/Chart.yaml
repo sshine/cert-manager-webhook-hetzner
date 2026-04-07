@@ -1,21 +1,20 @@
 apiVersion: v2
 name: cert-manager-webhook-hetzner
-version: 1.4.2
-appVersion: "1.4.2"
+version: 1.6.0
+appVersion: "1.6.0"
 kubeVersion: ">= 1.22.0-0"
-description: Allow cert-manager to solve DNS challenges using Hetzner DNS API
-home: https://github.com/vadimkim/cert-manager-webhook-hetzner
+description: cert-manager webhook for Hetzner Cloud DNS API
+home: https://github.com/sshine/cert-manager-webhook-hetzner
 icon: https://raw.githubusercontent.com/cert-manager/cert-manager/master/logo/logo-small.png
 keywords:
   - cert-manager
   - hetzner
-  - kube-lego
-  - letsencrypt
+  - dns
+  - acme
   - tls
 sources:
-  - https://github.com/vadimkim/cert-manager-webhook-hetzner
-maintainers:
-  - name: vadimkim
-    email: vadim@ant.ee
+  - https://github.com/sshine/cert-manager-webhook-hetzner
+mainters:
+  - name: sshine
 annotations:
   artifacthub.io/license: Apache-2.0

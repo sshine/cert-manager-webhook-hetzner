@@ -1,6 +1,4 @@
-# The kubernetes api group under which the webhook will be exposed. There is no need to
-# modify this value unless you are facing a collision in your api services.
-groupName: hetzner.cert-mananger-webhook.noshoes.xyz
+groupName: acme.yourdomain.tld
 
 certManager:
   namespace: cert-manager
@@ -8,10 +6,11 @@ certManager:
 
 image:
   registry: ghcr.io
-  repository: vadimkim/cert-manager-webhook-hetzner
-  # Overrides the image tag whose default is {{ printf "v%s" .Chart.AppVersion }}
+  repository: sshine/cert-manager-webhook-hetzner
   tag: ""
   pullPolicy: IfNotPresent
+
+replicaCount: 1
 
 nameOverride: ""
 fullnameOverride: ""
@@ -24,27 +23,12 @@ secretName:
   - hetzner-secret
 
 resources: {}
-  # We usually recommend not to specify default resources and to leave this as a conscious
-  # choice for the user. This also increases chances charts run on environments with little
-  # resources, such as Minikube. If you do want to specify resources, uncomment the following
-  # lines, adjust them as necessary, and remove the curly braces after 'resources:'.
-  # limits:
-  #  cpu: 100m
-  #  memory: 128Mi
-  # requests:
-  #  cpu: 100m
-#  memory: 128Mi
 
 nodeSelector: {}
 
 tolerations: []
 
 affinity: {}
-
-# Use these variables to configure the HTTP_PROXY environment variables
-# http_proxy: "http://proxy:8080"
-# https_proxy: "https://proxy:8080"
-# no_proxy: 127.0.0.1,localhost
 
 securityContext:
   allowPrivilegeEscalation: false
