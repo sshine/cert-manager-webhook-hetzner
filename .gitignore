@@ -2,6 +2,7 @@
 kubebuilder
 .vscode/
 .idea/
+.direnv/
 # Binaries for programs and plugins
 *.exe
 *.exe~

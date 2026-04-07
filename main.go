@@ -3,15 +3,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
-	"regexp"
-	"strings"
-
-	"encoding/json"
-	"fmt"
 	"os"
+	"regexp"
+	"strconv"
+	"strings"
 
 	extapi "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/client-go/rest"
@@ -41,9 +41,10 @@ type hetznerDNSProviderSolver struct {
 }
 
 type hetznerDNSProviderConfig struct {
-	SecretRef string `json:"secretName"`
-	ZoneName  string `json:"zoneName"`
-	ApiUrl    string `json:"apiUrl"`
+	SecretName string `json:"secretName"`
+	SecretKey  string `json:"secretKey"`
+	ZoneName   string `json:"zoneName"`
+	ApiUrl     string `json:"apiUrl"`
 }
 
 func (c *hetznerDNSProviderSolver) Name() string {
@@ -54,66 +55,104 @@ func (c *hetznerDNSProviderSolver) Present(ch *v1alpha1.ChallengeRequest) error 
 	klog.V(6).Infof("call function Present: namespace=%s, zone=%s, fqdn=%s",
 		ch.ResourceNamespace, ch.ResolvedZone, ch.ResolvedFQDN)
 
-	config, err := clientConfig(c, ch)
-
+	config, err := c.buildConfig(ch)
 	if err != nil {
-		return fmt.Errorf("unable to get secret `%s`; %v", ch.ResourceNamespace, err)
+		return err
 	}
 
-	addTxtRecord(config, ch)
+	rrsetName := recordName(ch.ResolvedFQDN, config.ZoneName)
 
-	klog.Infof("Presented txt record %v", ch.ResolvedFQDN)
+	existing, err := getRRSet(config, rrsetName)
+	if err != nil {
+		return fmt.Errorf("unable to check existing RRSet: %v", err)
+	}
+
+	if existing == nil {
+		ttl := internal.DefaultTxtTTL
+		createReq := internal.RRSetCreateRequest{
+			Name: rrsetName,
+			Type: "TXT",
+			TTL:  &ttl,
+			Records: []internal.RRSetRecord{
+				{Value: ch.Key},
+			},
+		}
+		body, err := json.Marshal(createReq)
+		if err != nil {
+			return fmt.Errorf("unable to marshal create request: %v", err)
+		}
+
+		url := config.ApiUrl + "/zones/" + config.ZoneIdStr() + "/rrsets"
+		_, err = callApi(url, "POST", bytes.NewReader(body), config)
+		if err != nil {
+			return fmt.Errorf("unable to create TXT RRSet: %v", err)
+		}
+		klog.Infof("Created TXT RRSet %s", rrsetName)
+	} else {
+		addReq := internal.RRSetAddRecordsRequest{
+			Records: []internal.RRSetRecord{
+				{Value: ch.Key},
+			},
+		}
+		body, err := json.Marshal(addReq)
+		if err != nil {
+			return fmt.Errorf("unable to marshal add records request: %v", err)
+		}
+
+		url := config.ApiUrl + "/zones/" + config.ZoneIdStr() + "/rrsets/" + rrsetName + "/TXT/actions/add_records"
+		_, err = callApi(url, "POST", bytes.NewReader(body), config)
+		if err != nil {
+			return fmt.Errorf("unable to add record to TXT RRSet: %v", err)
+		}
+		klog.Infof("Added record to existing TXT RRSet %s", rrsetName)
+	}
 
 	return nil
 }
 
 func (c *hetznerDNSProviderSolver) CleanUp(ch *v1alpha1.ChallengeRequest) error {
-	config, err := clientConfig(c, ch)
-
+	config, err := c.buildConfig(ch)
 	if err != nil {
-		return fmt.Errorf("unable to get secret `%s`; %v", ch.ResourceNamespace, err)
+		return err
 	}
 
-	zoneId, err := searchZoneId(config)
+	rrsetName := recordName(ch.ResolvedFQDN, config.ZoneName)
 
+	existing, err := getRRSet(config, rrsetName)
 	if err != nil {
-		return fmt.Errorf("unable to find id for zone name `%s`; %v", config.ZoneName, err)
+		return fmt.Errorf("unable to get TXT RRSet for cleanup: %v", err)
+	}
+	if existing == nil {
+		klog.Infof("RRSet %s already gone, nothing to clean up", rrsetName)
+		return nil
 	}
 
-	var url = config.ApiUrl + "/records?zone_id=" + zoneId
-
-	// Get all DNS records
-	dnsRecords, err := callDnsApi(url, "GET", nil, config)
-
-	if err != nil {
-		return fmt.Errorf("unable to get DNS records %v", err)
-	}
-
-	// Unmarshall response
-	records := internal.RecordResponse{}
-	readErr := json.Unmarshal(dnsRecords, &records)
-
-	if readErr != nil {
-		return fmt.Errorf("unable to unmarshal response %v", readErr)
-	}
-
-	var recordId string
-	name := recordName(ch.ResolvedFQDN, config.ZoneName)
-	for i := len(records.Records) - 1; i >= 0; i-- {
-		if strings.EqualFold(records.Records[i].Name, name) {
-			recordId = records.Records[i].Id
-			break
+	if len(existing.Records) <= 1 {
+		url := config.ApiUrl + "/zones/" + config.ZoneIdStr() + "/rrsets/" + rrsetName + "/TXT"
+		_, err = callApi(url, "DELETE", nil, config)
+		if err != nil {
+			return fmt.Errorf("unable to delete TXT RRSet: %v", err)
 		}
+		klog.Infof("Deleted TXT RRSet %s", rrsetName)
+	} else {
+		removeReq := internal.RRSetRemoveRecordsRequest{
+			Records: []internal.RRSetRecord{
+				{Value: ch.Key},
+			},
+		}
+		body, err := json.Marshal(removeReq)
+		if err != nil {
+			return fmt.Errorf("unable to marshal remove records request: %v", err)
+		}
+
+		url := config.ApiUrl + "/zones/" + config.ZoneIdStr() + "/rrsets/" + rrsetName + "/TXT/actions/remove_records"
+		_, err = callApi(url, "POST", bytes.NewReader(body), config)
+		if err != nil {
+			return fmt.Errorf("unable to remove record from TXT RRSet: %v", err)
+		}
+		klog.Infof("Removed record from TXT RRSet %s", rrsetName)
 	}
 
-	// Delete TXT record
-	url = config.ApiUrl + "/records/" + recordId
-	del, err := callDnsApi(url, "DELETE", nil, config)
-
-	if err != nil {
-		klog.Error(err)
-	}
-	klog.Infof("Delete TXT record result: %s", string(del))
 	return nil
 }
 
@@ -131,7 +170,6 @@ func (c *hetznerDNSProviderSolver) Initialize(kubeClientConfig *rest.Config, sto
 
 func loadConfig(cfgJSON *extapi.JSON) (hetznerDNSProviderConfig, error) {
 	cfg := hetznerDNSProviderConfig{}
-	// handle the 'base case' where no configuration has been provided
 	if cfgJSON == nil {
 		return cfg, nil
 	}
@@ -150,51 +188,40 @@ func stringFromSecretData(secretData map[string][]byte, key string) (string, err
 	return string(data), nil
 }
 
-func addTxtRecord(config internal.Config, ch *v1alpha1.ChallengeRequest) {
-	url := config.ApiUrl + "/records"
-
-	name := recordName(ch.ResolvedFQDN, config.ZoneName)
-	zoneId, err := searchZoneId(config)
-
-	if err != nil {
-		klog.Errorf("unable to find id for zone name `%s`; %v", config.ZoneName, err)
-	}
-
-	var jsonStr = fmt.Sprintf(`{"value":%q, "ttl":120, "type":"TXT", "name":%q, "zone_id":%q}`, ch.Key, name, zoneId)
-
-	add, err := callDnsApi(url, "POST", bytes.NewBuffer([]byte(jsonStr)), config)
-
-	if err != nil {
-		klog.Error(err)
-	}
-	klog.Infof("Added TXT record result: %s", string(add))
-}
-
-func clientConfig(c *hetznerDNSProviderSolver, ch *v1alpha1.ChallengeRequest) (internal.Config, error) {
-	var config internal.Config
-
+func (c *hetznerDNSProviderSolver) buildConfig(ch *v1alpha1.ChallengeRequest) (internal.Config, error) {
 	cfg, err := loadConfig(ch.Config)
 	if err != nil {
-		return config, err
+		return internal.Config{}, err
 	}
-	config.ZoneName = cfg.ZoneName
-	config.ApiUrl = cfg.ApiUrl
 
-	secretName := cfg.SecretRef
+	apiUrl := cfg.ApiUrl
+	if apiUrl == "" {
+		apiUrl = internal.DefaultApiUrl
+	}
+
+	secretKey := cfg.SecretKey
+	if secretKey == "" {
+		secretKey = internal.DefaultSecretKey
+	}
+
+	secretName := cfg.SecretName
 	sec, err := c.client.CoreV1().Secrets(ch.ResourceNamespace).Get(context.TODO(), secretName, metav1.GetOptions{})
-
 	if err != nil {
-		return config, fmt.Errorf("unable to get secret `%s/%s`; %v", secretName, ch.ResourceNamespace, err)
+		return internal.Config{}, fmt.Errorf("unable to get secret `%s/%s`; %v", secretName, ch.ResourceNamespace, err)
 	}
 
-	apiKey, err := stringFromSecretData(sec.Data, "api-key")
-	config.ApiKey = apiKey
-
+	apiKey, err := stringFromSecretData(sec.Data, secretKey)
 	if err != nil {
-		return config, fmt.Errorf("unable to get api-key from secret `%s/%s`; %v", secretName, ch.ResourceNamespace, err)
+		return internal.Config{}, fmt.Errorf("unable to get key %q from secret `%s/%s`; %v", secretKey, secretName, ch.ResourceNamespace, err)
 	}
 
-	// Get ZoneName by api search if not provided by config
+	config := internal.Config{
+		ApiKey:    apiKey,
+		ApiUrl:    apiUrl,
+		SecretKey: secretKey,
+		ZoneName:  cfg.ZoneName,
+	}
+
 	if config.ZoneName == "" {
 		foundZone, err := searchZoneName(config, ch.ResolvedZone)
 		if err != nil {
@@ -203,14 +230,15 @@ func clientConfig(c *hetznerDNSProviderSolver, ch *v1alpha1.ChallengeRequest) (i
 		config.ZoneName = foundZone
 	}
 
+	zoneId, err := searchZoneId(config)
+	if err != nil {
+		return config, fmt.Errorf("unable to find zone id for `%s`: %v", config.ZoneName, err)
+	}
+	config.ZoneId = zoneId
+
 	return config, nil
 }
 
-/*
-Domain name in Hetzner is divided in 2 parts: record + zone name. API works
-with record name that is FQDN without zone name. Subdomains is a part of
-record name and is separated by "."
-*/
 func recordName(fqdn, domain string) string {
 	r := regexp.MustCompile("(.+)\\." + domain + "\\.")
 	name := r.FindStringSubmatch(fqdn)
@@ -221,14 +249,14 @@ func recordName(fqdn, domain string) string {
 	return name[1]
 }
 
-func callDnsApi(url, method string, body io.Reader, config internal.Config) ([]byte, error) {
+func callApi(url, method string, body io.Reader, config internal.Config) ([]byte, error) {
 	ctx := context.Background()
 	req, err := http.NewRequestWithContext(ctx, method, url, body)
 	if err != nil {
-		return []byte{}, fmt.Errorf("unable to execute request %v", err)
+		return []byte{}, fmt.Errorf("unable to create request: %v", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Auth-API-Token", config.ApiKey)
+	req.Header.Set("Authorization", "Bearer "+config.ApiKey)
 
 	client := &http.Client{}
 	resp, err := client.Do(req)
@@ -244,48 +272,65 @@ func callDnsApi(url, method string, body io.Reader, config internal.Config) ([]b
 	}()
 
 	respBody, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode == http.StatusOK {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
 		return respBody, nil
 	}
 
-	text := "Error calling API status:" + resp.Status + " url: " + url + " method: " + method
+	text := fmt.Sprintf("Error calling API status: %s url: %s method: %s body: %s", resp.Status, url, method, string(respBody))
 	klog.Error(text)
 	return nil, errors.New(text)
 }
 
-func searchZoneId(config internal.Config) (string, error) {
+func searchZoneId(config internal.Config) (int64, error) {
 	url := config.ApiUrl + "/zones?name=" + config.ZoneName
 
-	// Get Zone configuration
-	zoneRecords, err := callDnsApi(url, "GET", nil, config)
-
+	data, err := callApi(url, "GET", nil, config)
 	if err != nil {
-		return "", fmt.Errorf("unable to get zone info %v", err)
+		return 0, fmt.Errorf("unable to get zone info: %v", err)
 	}
 
-	// Unmarshall response
-	zones := internal.ZoneResponse{}
-	readErr := json.Unmarshal(zoneRecords, &zones)
-
-	if readErr != nil {
-		return "", fmt.Errorf("unable to unmarshal response %v", readErr)
+	zones := internal.ZoneListResponse{}
+	if err := json.Unmarshal(data, &zones); err != nil {
+		return 0, fmt.Errorf("unable to unmarshal zone response: %v", err)
 	}
 
-	if zones.Meta.Pagination.TotalEntries != 1 {
-		return "", fmt.Errorf("wrong number of zones in response %d must be exactly = 1", zones.Meta.Pagination.TotalEntries)
+	if len(zones.Zones) != 1 {
+		return 0, fmt.Errorf("wrong number of zones in response %d, expected exactly 1", len(zones.Zones))
 	}
+
+	klog.V(6).Infof("Found zone %s with id %d", config.ZoneName, zones.Zones[0].Id)
 	return zones.Zones[0].Id, nil
+}
+
+func getRRSet(config internal.Config, rrsetName string) (*internal.RRSet, error) {
+	url := config.ApiUrl + "/zones/" + config.ZoneIdStr() + "/rrsets/" + rrsetName + "/TXT"
+
+	data, err := callApi(url, "GET", nil, config)
+	if err != nil {
+		if strings.Contains(err.Error(), "404") {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	resp := internal.RRSetResponse{}
+	if err := json.Unmarshal(data, &resp); err != nil {
+		return nil, fmt.Errorf("unable to unmarshal RRSet response: %v", err)
+	}
+
+	return &resp.RRSet, nil
 }
 
 func searchZoneName(config internal.Config, searchZone string) (string, error) {
 	parts := strings.Split(searchZone, ".")
 	parts = parts[:len(parts)-1]
 	for i := 0; i <= len(parts)-2; i++ {
-		config.ZoneName = strings.Join(parts[i:], ".")
-		zoneId, _ := searchZoneId(config)
-		if zoneId != "" {
-			klog.Infof("Found ID with ZoneName: %s", config.ZoneName)
-			return config.ZoneName, nil
+		candidate := strings.Join(parts[i:], ".")
+		config.ZoneName = candidate
+		zoneId, err := searchZoneId(config)
+		if err == nil && zoneId != 0 {
+			klog.Infof("Found zone with name: %s (id: %s)", candidate, strconv.FormatInt(zoneId, 10))
+			return candidate, nil
 		}
 	}
 	return "", fmt.Errorf("unable to find hetzner dns zone with: %s", searchZone)
